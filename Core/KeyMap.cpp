@@ -495,7 +495,7 @@ const KeyMap_IntStrPair psp_button_names[] = {
 	{VIRTKEY_RESET_EMULATION, "Reset"},
 	{VIRTKEY_FRAME_ADVANCE, "Frame Advance"},
 #if !defined(MOBILE_DEVICE)
-	{VIRTKEY_RECORD, "Audio/Video Recording" },
+	{VIRTKEY_RECORD, "Record MP4 video" },
 #endif
 	{VIRTKEY_REWIND, "Rewind"},
 	{VIRTKEY_SAVE_STATE, "Save State"},

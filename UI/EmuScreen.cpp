@@ -102,7 +102,7 @@ using namespace std::placeholders;
 #endif
 
 #ifndef MOBILE_DEVICE
-static AVIDump avi;
+static AVIDump videoRecorder;
 #endif
 
 class FadingChatButton : public UI::ChoiceWithValueDisplay {
@@ -486,10 +486,10 @@ EmuScreen::~EmuScreen() {
 	g_logManager.DisableOutput(LogOutput::RingBuffer);
 
 #ifndef MOBILE_DEVICE
-	if (g_Config.bDumpFrames && startDumping_)
+	if (startDumping_)
 	{
-		avi.Stop();
-		g_OSD.Show(OSDType::MESSAGE_INFO, "AVI Dump stopped.", 2.0f);
+		videoRecorder.Stop();
+		g_OSD.Show(OSDType::MESSAGE_INFO, "MP4 recording stopped.", 2.0f);
 		startDumping_ = false;
 	}
 #endif
@@ -1027,21 +1027,11 @@ void EmuScreen::ProcessVKey(VirtKey virtKey, bool down) {
 #ifndef MOBILE_DEVICE
 	case VIRTKEY_RECORD:
 		if (down) {
-			if (g_Config.bDumpFrames == g_Config.bDumpAudio) {
-				g_Config.bDumpFrames = !g_Config.bDumpFrames;
-				g_Config.bDumpAudio = !g_Config.bDumpAudio;
-			} else {
-				// This hotkey should always toggle both audio and video together.
-				// So let's make sure that's the only outcome even if video OR audio was already being dumped.
-				if (g_Config.bDumpFrames) {
-					AVIDump::Stop();
-					AVIDump::Start(PSP_CoreParameter().renderWidth, PSP_CoreParameter().renderHeight);
-					g_Config.bDumpAudio = true;
-				} else {
-					WAVDump::Reset();
-					g_Config.bDumpFrames = true;
-				}
-			}
+			// This shortcut always toggles a combined MP4 recording. If either legacy
+			// dump switch is active, stop both; otherwise start video and audio together.
+			const bool recording = g_Config.bDumpFrames || g_Config.bDumpAudio;
+			g_Config.bDumpFrames = !recording;
+			g_Config.bDumpAudio = !recording;
 		}
 		break;
 #endif
@@ -1575,22 +1565,27 @@ void EmuScreen::darken() {
 void EmuScreen::HandleFlip() {
 	Achievements::FrameUpdate();
 
-	// This video dumping stuff is bad. Or at least completely broken with frameskip..
+	// Record a video frame at each completed display flip.
 #ifndef MOBILE_DEVICE
 	if (g_Config.bDumpFrames && !startDumping_) {
 		auto sy = GetI18NCategory(I18NCat::SYSTEM);
-		avi.Start(PSP_CoreParameter().renderWidth, PSP_CoreParameter().renderHeight);
-		g_OSD.Show(OSDType::MESSAGE_INFO, sy->T("AVI Dump started."), 1.0f);
-		startDumping_ = true;
+		if (videoRecorder.Start(PSP_CoreParameter().renderWidth, PSP_CoreParameter().renderHeight)) {
+			g_OSD.Show(OSDType::MESSAGE_INFO, sy->T("MP4 recording started."), 1.0f);
+			startDumping_ = true;
+		} else {
+			g_Config.bDumpFrames = false;
+			g_Config.bDumpAudio = false;
+			g_OSD.Show(OSDType::MESSAGE_WARNING, sy->T("MP4 recording failed to start."), 3.0f);
+		}
 	}
 	if (g_Config.bDumpFrames && startDumping_) {
-		avi.AddFrame();
+		videoRecorder.AddFrame();
 	} else if (!g_Config.bDumpFrames && startDumping_) {
 		auto sy = GetI18NCategory(I18NCat::SYSTEM);
-		avi.Stop();
-		g_OSD.Show(OSDType::MESSAGE_INFO, sy->T("AVI Dump stopped."), 3.0f, "avi_dump");
-		Path lastFilename = avi.LastFilename();
-		g_OSD.SetClickCallback("avi_dump", [lastFilename]() {
+		videoRecorder.Stop();
+		g_OSD.Show(OSDType::MESSAGE_INFO, sy->T("MP4 recording stopped."), 3.0f, "mp4_recording");
+		Path lastFilename = videoRecorder.LastFilename();
+		g_OSD.SetClickCallback("mp4_recording", [lastFilename]() {
 			System_ShowFileInFolder(lastFilename);
 		});
 		startDumping_ = false;

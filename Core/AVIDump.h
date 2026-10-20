@@ -10,13 +10,14 @@
 
 class AVIDump {
 private:
-	static bool CreateAVI();
+	static bool CreateMP4();
 	static void CloseFile();
 	static void CheckResolution(int width, int height);
 
 public:
 	static bool Start(int w, int h);
 	static void AddFrame();
+	static void AddAudio(const s16 *samples, int numSamples, u64 timeUs);
 	static void Stop();
 	static Path LastFilename();
 };

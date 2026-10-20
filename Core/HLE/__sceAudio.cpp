@@ -34,6 +34,7 @@
 #include "Core/Reporting.h"
 #include "Core/System.h"
 #include "Core/WaveFile.h"
+#include "Core/AVIDump.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/HLE/sceKernelTime.h"
 #include "Core/HLE/ErrorCodes.h"
@@ -651,7 +652,7 @@ void __AudioUpdate(bool resetRecording) {
 		System_AudioPushSamples(mixBuffer, hwBlockSize, multiplier);
 
 #ifndef MOBILE_DEVICE
-		if (g_Config.bSaveLoadResetsAVdumping && resetRecording) {
+		if (g_Config.bSaveLoadResetsAVdumping && resetRecording && !g_Config.bDumpFrames) {
 			__StopLogAudio();
 			std::string discID = g_paramSFO.GetDiscID();
 			Path audio_file_name = GetSysDirectory(DIRECTORY_AUDIO) / StringFromFormat("%s_%s.wav", discID.c_str(), KernelTimeNowFormatted().c_str()).c_str();
@@ -662,7 +663,7 @@ void __AudioUpdate(bool resetRecording) {
 			__StartLogAudio(audio_file_name);
 		}
 		if (!m_logAudio) {
-			if (g_Config.bDumpAudio) {
+			if (g_Config.bDumpAudio && !g_Config.bDumpFrames) {
 				// Use gameID_EmulatedTimestamp for filename
 				std::string discID = g_paramSFO.GetDiscID();
 				Path audio_file_name = GetSysDirectory(DIRECTORY_AUDIO) / StringFromFormat("%s_%s.wav", discID.c_str(), KernelTimeNowFormatted().c_str());
@@ -674,7 +675,7 @@ void __AudioUpdate(bool resetRecording) {
 				__StartLogAudio(audio_file_name);
 			}
 		} else {
-			if (g_Config.bDumpAudio) {
+			if (g_Config.bDumpAudio && !g_Config.bDumpFrames) {
 				for (int i = 0; i < hwBlockSize * 2; i++) {
 					clampedMixBuffer[i] = clamp_s16(mixBuffer[i]);
 				}
@@ -685,6 +686,21 @@ void __AudioUpdate(bool resetRecording) {
 		}
 #endif
 	}
+
+#ifndef MOBILE_DEVICE
+	// The video recorder takes its audio from the same emulated mixer output as WAV dumping.
+	// Timestamp both streams in emulated time so they stay synchronized even when the host is busy.
+	if (g_Config.bDumpFrames) {
+		float recordingVolume = Volume100ToMultiplier(std::clamp(g_Config.iGameVolume, 0, VOLUMEHI_FULL));
+		if (PSP_CoreParameter().fpsLimit != FPSLimit::NORMAL || PSP_CoreParameter().fastForward) {
+			if (g_Config.iAltSpeedVolume != -1)
+				recordingVolume *= Volume100ToMultiplier(g_Config.iAltSpeedVolume);
+		}
+		for (int i = 0; i < hwBlockSize * 2; i++)
+			clampedMixBuffer[i] = g_Config.bEnableSound ? clamp_s16((s32)(mixBuffer[i] * recordingVolume)) : 0;
+		AVIDump::AddAudio(clampedMixBuffer, hwBlockSize, CoreTiming::GetGlobalTimeUs());
+	}
+#endif
 
 	// Only once the block is out. Rescheduling runs any due events, and when this tick was late
 	// that includes the next one, which would mix over mixBuffer before it was pushed - playing
