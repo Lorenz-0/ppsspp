@@ -1781,7 +1781,7 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 		if (frameAdvanceHeld_ && Core_IsStepping() && time_now_d() >= frameAdvanceNextTime_) {
 			Core_Resume();
 			frameStep_ = true;
-			frameAdvanceNextTime_ = time_now_d() + (frameAdvanceStartPending_ ? 0.3 : 0.1);
+			frameAdvanceNextTime_ = time_now_d() + (frameAdvanceStartPending_ ? 0.3 : 0.025);
 			frameAdvanceStartPending_ = false;
 		}
 
