@@ -138,6 +138,7 @@ private:
 	std::vector<std::pair<VirtKey, bool>> queuedVirtKeys_;
 
 	bool frameStep_ = false;
+	bool frameAdvanceHeld_ = false;
 #ifndef MOBILE_DEVICE
 	bool startDumping_ = false;
 #endif

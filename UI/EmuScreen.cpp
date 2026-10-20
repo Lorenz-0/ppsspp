@@ -973,10 +973,13 @@ void EmuScreen::ProcessVKey(VirtKey virtKey, bool down) {
 		break;
 
 	case VIRTKEY_FRAME_ADVANCE:
-		if (down) {
+		if (!down) {
+			frameAdvanceHeld_ = false;
+		} else {
 			// Can't do this reliably in an async fashion, so we just set a variable.
 			// Is this used by anyone? There's no user-friendly way to resume, other than PAUSE_NO_MENU or the debugger.
 			if (!NetworkWarnUserIfOnlineAndCantSpeed()) {
+				frameAdvanceHeld_ = true;
 				if (Core_IsStepping()) {
 					Core_Resume();
 					frameStep_ = true;
@@ -1760,6 +1763,13 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 				ERROR_LOG(Log::SaveState, "Failed to load freeze state (%s). Unfreezing.", errorString.c_str());
 				PSP_CoreParameter().frozen = false;
 			}
+		}
+
+		// A held frame-advance input should step again as soon as the previous
+		// frame has completed and the core is paused at the frame boundary.
+		if (frameAdvanceHeld_ && Core_IsStepping()) {
+			Core_Resume();
+			frameStep_ = true;
 		}
 
 		PSP_RunLoopWhileState();
