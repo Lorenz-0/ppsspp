@@ -1048,6 +1048,8 @@ static const ConfigSetting controlSettings[] = {
 	ConfigSetting("MouseSensitivity", SETTING(g_Config, fMouseSensitivity), 0.1f, CfgFlag::PER_GAME),
 	ConfigSetting("MouseSmoothing", SETTING(g_Config, fMouseSmoothing), 0.9f, CfgFlag::PER_GAME),
 	ConfigSetting("MouseWheelUpDelayMs", SETTING(g_Config, iMouseWheelUpDelayMs), 80, CfgFlag::PER_GAME),
+	ConfigSetting("FrameAdvanceDelayMs", SETTING(g_Config, iFrameAdvanceDelayMs), 300, CfgFlag::DEFAULT),
+	ConfigSetting("FrameAdvanceIntervalMs", SETTING(g_Config, iFrameAdvanceIntervalMs), 25, CfgFlag::DEFAULT),
 
 	ConfigSetting("SystemControls", SETTING(g_Config, bSystemControls), true, CfgFlag::DEFAULT),
 	ConfigSetting("RapidFileInterval", SETTING(g_Config, iRapidFireInterval), 5, CfgFlag::DEFAULT),

@@ -561,6 +561,8 @@ public:
 	float fMouseSensitivity;
 	float fMouseSmoothing;
 	int iMouseWheelUpDelayMs;
+	int iFrameAdvanceDelayMs;
+	int iFrameAdvanceIntervalMs;
 
 	// Crude Windows controller filter.
 	bool bAllowHIDInput;

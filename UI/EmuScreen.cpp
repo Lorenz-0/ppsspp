@@ -991,7 +991,7 @@ void EmuScreen::ProcessVKey(VirtKey virtKey, bool down) {
 				if (Core_IsStepping()) {
 					Core_Resume();
 					frameStep_ = true;
-					frameAdvanceNextTime_ = time_now_d() + 0.3;
+					frameAdvanceNextTime_ = time_now_d() + g_Config.iFrameAdvanceDelayMs / 1000.0;
 					frameAdvanceStartPending_ = false;
 				} else {
 					Core_Break(BreakReason::FrameAdvance);
@@ -1781,7 +1781,7 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 		if (frameAdvanceHeld_ && Core_IsStepping() && time_now_d() >= frameAdvanceNextTime_) {
 			Core_Resume();
 			frameStep_ = true;
-			frameAdvanceNextTime_ = time_now_d() + (frameAdvanceStartPending_ ? 0.3 : 0.025);
+			frameAdvanceNextTime_ = time_now_d() + (frameAdvanceStartPending_ ? g_Config.iFrameAdvanceDelayMs : g_Config.iFrameAdvanceIntervalMs) / 1000.0;
 			frameAdvanceStartPending_ = false;
 		}
 

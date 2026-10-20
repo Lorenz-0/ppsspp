@@ -786,6 +786,12 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 		screenManager()->push(new AnalogCalibrationScreen(gamePath_));
 	});
 
+	controlsSettings->Add(new ItemHeader(co->T("Frame advance")));
+	auto frameAdvanceDelay = controlsSettings->Add(new PopupSliderChoice(&g_Config.iFrameAdvanceDelayMs, 0, 1000, 300, co->T("Frame advance initial delay"), 10, screenManager()));
+	frameAdvanceDelay->SetFormat(di->T("%d ms"));
+	auto frameAdvanceInterval = controlsSettings->Add(new PopupSliderChoice(&g_Config.iFrameAdvanceIntervalMs, 5, 250, 25, co->T("Frame advance repeat interval"), 5, screenManager()));
+	frameAdvanceInterval->SetFormat(di->T("%d ms"));
+
 #if (PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)) || (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
 	controlsSettings->Add(new CheckBox(&g_Config.bSystemControls, co->T("Enable standard shortcut keys")));
 #endif
