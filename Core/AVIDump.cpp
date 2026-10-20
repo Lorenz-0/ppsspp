@@ -115,6 +115,12 @@ bool AVIDump::Start(int w, int h)
 
 #ifdef USE_FFMPEG
 
+static void LogAVError(const char *what, int error) {
+	char message[128] = "";
+	av_strerror(error, message, sizeof(message));
+	ERROR_LOG(Log::Common, "Recording: %s failed: %s (%d)", what, message, error);
+}
+
 static bool CreateAudioStream() {
 	AVCodec *audioCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
 	s_audio_stream = avformat_new_stream(s_format_context, audioCodec);
@@ -143,8 +149,11 @@ static bool CreateAudioStream() {
 	if (s_format_context->oformat->flags & AVFMT_GLOBALHEADER)
 		s_audio_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-	if (avcodec_open2(s_audio_context, audioCodec, nullptr) < 0)
+	int audioError = avcodec_open2(s_audio_context, audioCodec, nullptr);
+	if (audioError < 0) {
+		LogAVError("opening the AAC encoder", audioError);
 		return false;
+	}
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
 	if (avcodec_parameters_from_context(s_audio_stream->codecpar, s_audio_context) < 0)
 		return false;
@@ -206,11 +215,15 @@ bool AVIDump::CreateAVI() {
 		File::Delete(g_filename);
 
 	s_format_context->oformat = av_guess_format(s_is_mp4 ? "mp4" : "avi", nullptr, nullptr);
-	if (!s_format_context->oformat)
+	if (!s_format_context->oformat) {
+		ERROR_LOG(Log::Common, "Recording: no %s muxer in this FFmpeg build", s_is_mp4 ? "mp4" : "avi");
 		return false;
+	}
 	s_stream = avformat_new_stream(s_format_context, codec);
-	if (!s_stream)
+	if (!s_stream) {
+		ERROR_LOG(Log::Common, "Recording: could not create the video stream");
 		return false;
+	}
 
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(57, 48, 101)
 	s_codec_context = s_stream->codec;
@@ -239,10 +252,15 @@ bool AVIDump::CreateAVI() {
 #endif
 
 	codec = avcodec_find_encoder(s_codec_context->codec_id);
-	if (!codec)
+	if (!codec) {
+		ERROR_LOG(Log::Common, "Recording: no video encoder (codec id %d) in this FFmpeg build", (int)s_codec_context->codec_id);
 		return false;
-	if (avcodec_open2(s_codec_context, codec, nullptr) < 0)
+	}
+	int videoError = avcodec_open2(s_codec_context, codec, nullptr);
+	if (videoError < 0) {
+		LogAVError("opening the video encoder", videoError);
 		return false;
+	}
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
 	// Again now that the encoder has produced its extradata, which MP4 needs.
 	if (avcodec_parameters_from_context(s_stream->codecpar, s_codec_context) < 0)
@@ -274,8 +292,15 @@ bool AVIDump::CreateAVI() {
 #endif
 
 	NOTICE_LOG(Log::G3D, "Opening file '%s' for dumping", g_filename.ToVisualString().c_str());
-	if (avio_open(&s_format_context->pb, filename, AVIO_FLAG_WRITE) < 0 || avformat_write_header(s_format_context, nullptr)) {
+	int openError = avio_open(&s_format_context->pb, filename, AVIO_FLAG_WRITE);
+	if (openError < 0) {
+		LogAVError("opening the output file", openError);
 		WARN_LOG(Log::G3D, "Could not open %s", g_filename.ToVisualString().c_str());
+		return false;
+	}
+	int headerError = avformat_write_header(s_format_context, nullptr);
+	if (headerError < 0) {
+		LogAVError("writing the file header", headerError);
 		return false;
 	}
 
