@@ -28,6 +28,7 @@
 #include "Common/Math/SIMDHeaders.h"
 #include "Common/StringUtils.h"
 
+#include "Core/AVIDump.h"
 #include "Core/Config.h"
 #include "Core/CoreTiming.h"
 #include "Core/MemMapHelpers.h"
@@ -651,7 +652,18 @@ void __AudioUpdate(bool resetRecording) {
 		System_AudioPushSamples(mixBuffer, hwBlockSize, multiplier);
 
 #ifndef MOBILE_DEVICE
-		if (g_Config.bSaveLoadResetsAVdumping && resetRecording) {
+		// An MP4 with an audio track takes the mix itself, so the separate WAV is skipped.
+		const bool mp4Audio = AVIDump::IsRecordingAudio();
+		if (mp4Audio) {
+			if (m_logAudio) {
+				__StopLogAudio();
+			}
+			for (int i = 0; i < hwBlockSize * 2; i++) {
+				clampedMixBuffer[i] = clamp_s16(mixBuffer[i]);
+			}
+			AVIDump::AddAudioSamples(clampedMixBuffer, hwBlockSize);
+		}
+		if (g_Config.bSaveLoadResetsAVdumping && resetRecording && !mp4Audio) {
 			__StopLogAudio();
 			std::string discID = g_paramSFO.GetDiscID();
 			Path audio_file_name = GetSysDirectory(DIRECTORY_AUDIO) / StringFromFormat("%s_%s.wav", discID.c_str(), KernelTimeNowFormatted().c_str()).c_str();
@@ -662,7 +674,7 @@ void __AudioUpdate(bool resetRecording) {
 			__StartLogAudio(audio_file_name);
 		}
 		if (!m_logAudio) {
-			if (g_Config.bDumpAudio) {
+			if (g_Config.bDumpAudio && !mp4Audio) {
 				// Use gameID_EmulatedTimestamp for filename
 				std::string discID = g_paramSFO.GetDiscID();
 				Path audio_file_name = GetSysDirectory(DIRECTORY_AUDIO) / StringFromFormat("%s_%s.wav", discID.c_str(), KernelTimeNowFormatted().c_str());

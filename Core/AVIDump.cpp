@@ -10,14 +10,20 @@
 
 #include <string>
 #include <cstdint>
+#include <cstring>
 #include <sstream>
+#include <atomic>
+#include <mutex>
+#include <vector>
 
 #ifdef USE_FFMPEG
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/samplefmt.h>
 #include <libswscale/swscale.h>
 }
 
@@ -54,7 +60,21 @@ static AVFrame *s_src_frame = nullptr;
 static AVFrame *s_scaled_frame = nullptr;
 static SwsContext *s_sws_context = nullptr;
 
+// MP4 only: AAC audio muxed into the same file.
+static AVStream *s_audio_stream = nullptr;
+static AVCodecContext *s_audio_context = nullptr;
+static AVFrame *s_audio_frame = nullptr;
+static std::vector<float> s_audio_fifo[2];
+static s64 s_video_pts = 0;
+static s64 s_audio_pts = 0;
+
 #endif
+
+// Video frames come from the flip, audio blocks from the mixer, and both write to the same muxer.
+// Recursive because a resolution change calls Stop and Start from inside AddFrame.
+static std::recursive_mutex s_dumpMutex;
+static std::atomic<bool> s_audioActive;
+static bool s_is_mp4 = false;
 
 static int s_bytes_per_pixel;
 static int s_width;
@@ -80,6 +100,7 @@ static void InitAVCodec() {
 
 bool AVIDump::Start(int w, int h)
 {
+	std::lock_guard<std::recursive_mutex> guard(s_dumpMutex);
 	s_width = w;
 	s_height = h;
 	s_current_width = w;
@@ -92,13 +113,78 @@ bool AVIDump::Start(int w, int h)
 	return success;
 }
 
+#ifdef USE_FFMPEG
+
+static bool CreateAudioStream() {
+	AVCodec *audioCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+	s_audio_stream = avformat_new_stream(s_format_context, audioCodec);
+	if (!s_audio_stream)
+		return false;
+
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(57, 48, 101)
+	s_audio_context = s_audio_stream->codec;
+#else
+	s_audio_context = avcodec_alloc_context3(audioCodec);
+#endif
+	s_audio_context->codec_id = AV_CODEC_ID_AAC;
+	s_audio_context->codec_type = AVMEDIA_TYPE_AUDIO;
+	s_audio_context->sample_fmt = AV_SAMPLE_FMT_FLTP;
+	s_audio_context->sample_rate = 44100;
+	s_audio_context->bit_rate = 192000;
+	s_audio_context->time_base.num = 1;
+	s_audio_context->time_base.den = 44100;
+	s_audio_context->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 24, 100)
+	av_channel_layout_default(&s_audio_context->ch_layout, 2);
+#else
+	s_audio_context->channel_layout = AV_CH_LAYOUT_STEREO;
+	s_audio_context->channels = 2;
+#endif
+	if (s_format_context->oformat->flags & AVFMT_GLOBALHEADER)
+		s_audio_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+	if (avcodec_open2(s_audio_context, audioCodec, nullptr) < 0)
+		return false;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
+	if (avcodec_parameters_from_context(s_audio_stream->codecpar, s_audio_context) < 0)
+		return false;
+#endif
+
+	s_audio_frame = av_frame_alloc();
+	s_audio_frame->format = AV_SAMPLE_FMT_FLTP;
+	s_audio_frame->nb_samples = s_audio_context->frame_size;
+	s_audio_frame->sample_rate = s_audio_context->sample_rate;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 24, 100)
+	av_channel_layout_copy(&s_audio_frame->ch_layout, &s_audio_context->ch_layout);
+#else
+	s_audio_frame->channel_layout = AV_CH_LAYOUT_STEREO;
+#endif
+	if (av_frame_get_buffer(s_audio_frame, 0) < 0)
+		return false;
+
+	s_audio_pts = 0;
+	s_audio_fifo[0].clear();
+	s_audio_fifo[1].clear();
+	return true;
+}
+
+#endif
+
 bool AVIDump::CreateAVI() {
 #ifdef USE_FFMPEG
 	AVCodec *codec = nullptr;
 
+	s_is_mp4 = g_Config.bDumpMP4;
+	if (s_is_mp4 && !av_guess_format("mp4", nullptr, nullptr)) {
+		WARN_LOG(Log::Common, "This FFmpeg build has no MP4 muxer, recording AVI instead");
+		s_is_mp4 = false;
+	}
+	const bool useFFV1 = g_Config.bUseFFV1 && !s_is_mp4;
+	s_video_pts = 0;
+
 	// Use gameID_EmulatedTimestamp for filename
 	std::string discID = g_paramSFO.GetDiscID();
-	g_filename = GetSysDirectory(DIRECTORY_VIDEO) / StringFromFormat("%s_%s.avi", discID.c_str(), KernelTimeNowFormatted().c_str());
+	g_filename = GetSysDirectory(DIRECTORY_VIDEO) / StringFromFormat("%s_%s.%s", discID.c_str(), KernelTimeNowFormatted().c_str(), s_is_mp4 ? "mp4" : "avi");
 
 	s_format_context = avformat_alloc_context();
 
@@ -119,7 +205,7 @@ bool AVIDump::CreateAVI() {
 	if (File::Exists(g_filename))
 		File::Delete(g_filename);
 
-	s_format_context->oformat = av_guess_format("avi", nullptr, nullptr);
+	s_format_context->oformat = av_guess_format(s_is_mp4 ? "mp4" : "avi", nullptr, nullptr);
 	if (!s_format_context->oformat)
 		return false;
 	s_stream = avformat_new_stream(s_format_context, codec);
@@ -131,17 +217,21 @@ bool AVIDump::CreateAVI() {
 #else
 	s_codec_context = avcodec_alloc_context3(codec);
 #endif
-	s_codec_context->codec_id = g_Config.bUseFFV1 ? AV_CODEC_ID_FFV1 : s_format_context->oformat->video_codec;
-	if (!g_Config.bUseFFV1)
+	// The mp4 muxer's default video codec is H.264, which this FFmpeg build doesn't have an encoder for.
+	s_codec_context->codec_id = s_is_mp4 ? AV_CODEC_ID_MPEG4 : (useFFV1 ? AV_CODEC_ID_FFV1 : s_format_context->oformat->video_codec);
+	if (!useFFV1 && !s_is_mp4)
 		s_codec_context->codec_tag = MKTAG('X', 'V', 'I', 'D');  // Force XVID FourCC for better compatibility
 	s_codec_context->codec_type = AVMEDIA_TYPE_VIDEO;
-	s_codec_context->bit_rate = 400000;
+	s_codec_context->bit_rate = s_is_mp4 ? 8000000 : 400000;
 	s_codec_context->width = s_width;
 	s_codec_context->height = s_height;
 	s_codec_context->time_base.num = 1001;
 	s_codec_context->time_base.den = 60000;
 	s_codec_context->gop_size = 12;
-	s_codec_context->pix_fmt = g_Config.bUseFFV1 ? AV_PIX_FMT_BGRA : AV_PIX_FMT_YUV420P;
+	s_codec_context->pix_fmt = useFFV1 ? AV_PIX_FMT_BGRA : AV_PIX_FMT_YUV420P;
+	// MP4 stores the codec setup in the file header rather than in the stream.
+	if (s_format_context->oformat->flags & AVFMT_GLOBALHEADER)
+		s_codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
 	if (avcodec_parameters_from_context(s_stream->codecpar, s_codec_context) < 0)
@@ -153,6 +243,20 @@ bool AVIDump::CreateAVI() {
 		return false;
 	if (avcodec_open2(s_codec_context, codec, nullptr) < 0)
 		return false;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
+	// Again now that the encoder has produced its extradata, which MP4 needs.
+	if (avcodec_parameters_from_context(s_stream->codecpar, s_codec_context) < 0)
+		return false;
+#endif
+
+	if (s_is_mp4 && g_Config.bDumpAudio) {
+		if (!avcodec_find_encoder(AV_CODEC_ID_AAC)) {
+			WARN_LOG(Log::Common, "This FFmpeg build has no AAC encoder, recording MP4 without audio");
+		} else if (!CreateAudioStream()) {
+			WARN_LOG(Log::Common, "Could not set up AAC audio");
+			return false;
+		}
+	}
 
 	s_src_frame = av_frame_alloc();
 	s_scaled_frame = av_frame_alloc();
@@ -175,6 +279,7 @@ bool AVIDump::CreateAVI() {
 		return false;
 	}
 
+	s_audioActive = s_audio_context != nullptr;
 	return true;
 #else
 	return false;
@@ -192,6 +297,11 @@ static void PreparePacket(AVPacket* pkt) {
 #endif
 
 void AVIDump::AddFrame() {
+	std::lock_guard<std::recursive_mutex> guard(s_dumpMutex);
+#ifdef USE_FFMPEG
+	if (!s_format_context || !s_codec_context)
+		return;
+#endif
 	u32 w = 0;
 	u32 h = 0;
 	if (g_Config.bDumpVideoOutput) {
@@ -223,6 +333,7 @@ void AVIDump::AddFrame() {
 	s_scaled_frame->format = s_codec_context->pix_fmt;
 	s_scaled_frame->width = s_width;
 	s_scaled_frame->height = s_height;
+	s_scaled_frame->pts = s_video_pts++;
 
 	// Encode and write the image.
 	AVPacket pkt;
@@ -274,12 +385,104 @@ void AVIDump::AddFrame() {
 	delete[] flipbuffer;
 }
 
+#ifdef USE_FFMPEG
+
+// Encodes one frame of audio (or flushes the encoder, with nullptr) and writes the packets.
+static void EncodeAudioFrame(AVFrame *frame) {
+	AVPacket pkt;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
+	int error = avcodec_send_frame(s_audio_context, frame);
+	if (error < 0 && error != AVERROR_EOF) {
+		ERROR_LOG(Log::G3D, "Error while encoding audio: %d", error);
+		return;
+	}
+	while (true) {
+		PreparePacket(&pkt);
+		if (avcodec_receive_packet(s_audio_context, &pkt) < 0)
+			break;
+		pkt.stream_index = s_audio_stream->index;
+		av_packet_rescale_ts(&pkt, s_audio_context->time_base, s_audio_stream->time_base);
+		av_interleaved_write_frame(s_format_context, &pkt);
+		av_packet_unref(&pkt);
+	}
+#else
+	int got_packet = 0;
+	do {
+		PreparePacket(&pkt);
+		got_packet = 0;
+		int error = avcodec_encode_audio2(s_audio_context, &pkt, frame, &got_packet);
+		if (error < 0) {
+			ERROR_LOG(Log::G3D, "Error while encoding audio: %d", error);
+			return;
+		}
+		if (got_packet) {
+			pkt.stream_index = s_audio_stream->index;
+			av_packet_rescale_ts(&pkt, s_audio_context->time_base, s_audio_stream->time_base);
+			av_interleaved_write_frame(s_format_context, &pkt);
+			av_packet_unref(&pkt);
+		}
+		// With a frame, one call is enough. Without, keep going until the encoder is drained.
+	} while (!frame && got_packet);
+#endif
+}
+
+// Encodes the next frame_size samples from the queue.
+static void EncodeQueuedAudioFrame() {
+	const int frameSize = s_audio_frame->nb_samples;
+	if (av_frame_make_writable(s_audio_frame) < 0)
+		return;
+	for (int c = 0; c < 2; c++) {
+		memcpy(s_audio_frame->data[c], s_audio_fifo[c].data(), frameSize * sizeof(float));
+		s_audio_fifo[c].erase(s_audio_fifo[c].begin(), s_audio_fifo[c].begin() + frameSize);
+	}
+	s_audio_frame->pts = s_audio_pts;
+	s_audio_pts += frameSize;
+	EncodeAudioFrame(s_audio_frame);
+}
+
+#endif
+
+void AVIDump::AddAudioSamples(const s16 *samples, int numFrames) {
+#ifdef USE_FFMPEG
+	if (!s_audioActive)
+		return;
+	std::lock_guard<std::recursive_mutex> guard(s_dumpMutex);
+	if (!s_audio_context)
+		return;
+
+	// s16 interleaved stereo in, planar float out, which is what the AAC encoder takes.
+	for (int i = 0; i < numFrames; i++) {
+		s_audio_fifo[0].push_back(samples[i * 2] * (1.0f / 32768.0f));
+		s_audio_fifo[1].push_back(samples[i * 2 + 1] * (1.0f / 32768.0f));
+	}
+	while ((int)s_audio_fifo[0].size() >= s_audio_frame->nb_samples) {
+		EncodeQueuedAudioFrame();
+	}
+#endif
+}
+
+bool AVIDump::IsRecordingAudio() {
+	return s_audioActive;
+}
+
 Path AVIDump::LastFilename() {
 	return g_filename;
 }
 
 void AVIDump::Stop() {
+	std::lock_guard<std::recursive_mutex> guard(s_dumpMutex);
 #ifdef USE_FFMPEG
+	if (s_audio_context) {
+		s_audioActive = false;
+		// AAC needs whole frames, so pad the tail with silence.
+		if (!s_audio_fifo[0].empty()) {
+			for (int c = 0; c < 2; c++) {
+				s_audio_fifo[c].resize(s_audio_frame->nb_samples, 0.0f);
+			}
+			EncodeQueuedAudioFrame();
+		}
+		EncodeAudioFrame(nullptr);
+	}
 	av_write_trailer(s_format_context);
 	CloseFile();
 	s_file_index = 0;
@@ -301,6 +504,18 @@ void AVIDump::CloseFile() {
 #endif
 	}
 	av_freep(&s_stream);
+
+	s_audioActive = false;
+	if (s_audio_context) {
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
+		avcodec_free_context(&s_audio_context);
+#else
+		avcodec_close(s_audio_context);
+		s_audio_context = nullptr;
+#endif
+	}
+	av_freep(&s_audio_stream);
+	av_frame_free(&s_audio_frame);
 
 	av_frame_free(&s_src_frame);
 	av_frame_free(&s_scaled_frame);

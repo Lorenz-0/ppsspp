@@ -1488,6 +1488,7 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 	systemSettings->Add(new ItemHeader(sy->T("Recording")));
 	systemSettings->Add(new CheckBox(&g_Config.bDumpFrames, sy->T("Record Display")));
 	systemSettings->Add(new CheckBox(&g_Config.bUseFFV1, sy->T("Use Lossless Video Codec (FFV1)")));
+	systemSettings->Add(new CheckBox(&g_Config.bDumpMP4, sy->T("Record as MP4 (video and audio in one file)")));
 	systemSettings->Add(new CheckBox(&g_Config.bDumpVideoOutput, sy->T("Use output buffer (with overlay) for recording")));
 	systemSettings->Add(new CheckBox(&g_Config.bDumpAudio, sy->T("Record Audio")));
 	systemSettings->Add(new CheckBox(&g_Config.bSaveLoadResetsAVdumping, sy->T("Reset Recording on Save/Load State")));

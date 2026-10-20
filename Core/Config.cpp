@@ -287,6 +287,7 @@ static const ConfigSetting generalSettings[] = {
 	ConfigSetting("ScreenshotMode", SETTING(g_Config, iScreenshotMode), 0, CfgFlag::DEFAULT),
 	ConfigSetting("ScreenshotsAsPNG", SETTING(g_Config, bScreenshotsAsPNG), false, CfgFlag::PER_GAME),
 	ConfigSetting("UseFFV1", SETTING(g_Config, bUseFFV1), false, CfgFlag::DEFAULT),
+	ConfigSetting("DumpMP4", SETTING(g_Config, bDumpMP4), false, CfgFlag::DEFAULT),
 	ConfigSetting("DumpFrames", SETTING(g_Config, bDumpFrames), false, CfgFlag::DEFAULT),
 	ConfigSetting("DumpVideoOutput", SETTING(g_Config, bDumpVideoOutput), false, CfgFlag::DEFAULT),
 	ConfigSetting("DumpAudio", SETTING(g_Config, bDumpAudio), false, CfgFlag::DEFAULT),

@@ -188,6 +188,7 @@ public:
 	// General
 	bool bScreenshotsAsPNG;
 	bool bUseFFV1;
+	bool bDumpMP4;
 	bool bDumpFrames;
 	bool bDumpVideoOutput;
 	bool bDumpAudio;
