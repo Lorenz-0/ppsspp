@@ -139,6 +139,8 @@ private:
 
 	bool frameStep_ = false;
 	bool frameAdvanceHeld_ = false;
+	bool frameAdvanceStartPending_ = false;
+	double frameAdvanceNextTime_ = 0.0;
 #ifndef MOBILE_DEVICE
 	bool startDumping_ = false;
 #endif
