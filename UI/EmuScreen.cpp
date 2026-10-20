@@ -749,6 +749,8 @@ void EmuScreen::ProcessVKey(VirtKey virtKey, bool down) {
 		// Note: We don't check NetworkWarnUserIfOnlineAndCantSpeed, because we can keep
 		// running in the background of the menu.
 		if (down) {
+			frameAdvanceHeld_ = false;
+			frameAdvanceStartPending_ = false;
 			pauseTrigger_ = true;
 		}
 		break;
@@ -941,6 +943,10 @@ void EmuScreen::ProcessVKey(VirtKey virtKey, bool down) {
 	case VIRTKEY_PAUSE_NO_MENU:
 		if (down) {
 			if (!NetworkWarnUserIfOnlineAndCantSpeed()) {
+				// A pause/resume input also cancels held frame advance, so it can
+				// always unpause the core while frame advance is being held.
+				frameAdvanceHeld_ = false;
+				frameAdvanceStartPending_ = false;
 				// We re-use debug break/resume to implement pause/resume without a menu.
 				if (coreState == CORE_STEPPING_CPU) {  // should we check reason?
 					Core_Resume();
